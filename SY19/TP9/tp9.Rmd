@@ -1,0 +1,116 @@
+```{r}
+sample.donut <- function(n, p, r1, r2) {
+
+    # y = sample(c(1, 2), size=n, prob=c(p, 1-p), replace=TRUE
+    n1 = round(n * p)
+    n2 = n - n1
+  
+    R1 <- rnorm(n1, mean = r1)
+    angle1 <- runif(n1, 0, 2 * pi)
+    df1 = data.frame(X1 = R1 * cos(angle1), X2 = R1 * sin(angle1))
+    
+    R2 <- rnorm(n2, mean = r2)
+    angle2 <- runif(n2, 0, 2 * pi)
+    df2 = data.frame(X1 = R2 * cos(angle2), X2 = R2 * sin(angle2))
+    
+    df = rbind(df1, df2) # combine les vecteurs sous forme de multi rows
+    df$y = as.factor( c(rep(1, n1), rep(2, n2)) )
+    
+    return(df)
+}
+```
+
+```{r}
+
+pts = sample.donut(3000, 0.5, 5, 8)
+plot(pts[, 1], pts[, 2], col=pts[, 3])
+```
+
+```{r}
+X = pts
+
+r1 = 3
+r2 = 5
+  
+n = 1000
+p = 0.5
+
+X.train = sample.donut(n, p, r1, r2)
+X.test = sample.donut(10000, p, r1, r2)
+
+library(MASS)
+model = lda(y ~ poly(X1, 2) + poly(X2, 2), data = X.train)
+pred = predict(model, newdata = X.test)$class
+
+mean(pred == X.test$y)
+```
+
+```{r}
+library(mclust)
+
+mc = MclustDA(X.train[,-3], X.train$y)
+# plot(mc)
+```
+
+```{r}
+pred = predict(mc, X.test[,-3])$classification
+
+mean(pred == X.test$y)
+```
+
+```{r}
+library(mgcv)
+
+X.train$y = as.factor(X.train$y)
+
+model = gam(y ~ s(X1) + s(X2), data=X.train, family = binomial)
+vis.gam(model)
+plot(model)
+```
+
+```{r}
+X.test$y = as.factor(X.test$y)
+
+probs = predict(model, newdata=X.test, type="response")
+
+pred = ifelse(probs < 0.5, 1, 2)
+pred = as.factor(pred)
+
+mean(pred == X.test$y)
+```
+
+#### Avec très peu de données ?
+
+```{r}
+X.train = sample.donut(30, p, r1, r2)
+X.test = sample.donut(10000, p, r1, r2)
+
+library(MASS)
+model = lda(y ~ poly(X1, 2) + poly(X2, 2), data = X.train)
+pred = predict(model, newdata = X.test)$class
+
+mean(pred == X.test$y)
+```
+
+```{r}
+mc = MclustDA(X.train[,-3], X.train$y)
+pred = predict(mc, X.test[,-3])$classification
+
+mean(pred == X.test$y)
+```
+
+```{r}
+X.train$y = as.factor(X.train$y)
+model = gam(y ~ s(X1) + s(X2), data=X.train, family = binomial)
+
+X.test$y = as.factor(X.test$y)
+
+probs = predict(model, newdata=X.test, type="response")
+
+pred = ifelse(probs > 0.5, 1, 2)
+pred = as.factor(pred)
+
+mean(pred != X.test$y)
+
+plot(model)
+```

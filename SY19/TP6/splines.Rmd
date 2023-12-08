@@ -1,0 +1,54 @@
+### STRTP Splines
+
+```{r}
+library(MASS)
+
+attach(Boston) # importation des données du dataset Boston, on peut désormais accéder à toutes les variables directement dans le code
+plot(lstat, medv)
+```
+
+### Trouver un modèle adapté, avec une Spline
+
+```{r}
+model = lm(medv ~ poly(lstat, 3), data=Boston)
+
+# poly a ajouté 2 coefficients au modèle (total = 3) qui servent à représenter la spline
+
+summary(model)
+```
+
+```{r}
+fit.linear = lm(medv ~ lstat, data=Boston)
+fit.poly5 = lm(medv ~ poly(lstat, 5), data=Boston)
+
+ypred.linear = predict(fit.linear, newdata=Boston)
+ypred.poly3 = predict(model, newdata=Boston)
+ypred.poly5 = predict(fit.poly5, newdata=Boston)
+
+idx = sort(lstat, index.return=T)
+
+plot(medv, lstat)
+lines(lstat[idx$ix], ypred.poly5[idx$ix], col="blue", lty=5, lwd=3)
+lines(lstat[idx$ix], ypred.poly3[idx$ix], col="red", lty=5, lwd=5)
+abline(
+  fit.linear$coefficients[1],
+  fit.linear$coefficients[2],
+  col="orange", lty=5, lwd=5
+)
+
+legend("topright",
+       legend = c("taille 5", "taille 3", "linéaire"),
+       col = c("blue", "red", "orange"),
+       lty = c(4, 3, 1), lwd = 3
+       )
+```
+
+Remarque : Dans le TP sur les Arbres, on a appris à manuellement déterminer le meilleur coefficient et à effectuer le Pruning.
+
+### Optimal value of p
+
+#### To be estimated with cross-validation
+
+```{r}
+
+```

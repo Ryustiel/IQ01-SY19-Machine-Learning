@@ -1,0 +1,72 @@
+## Experimentation !
+
+```{r}
+library(MASS)
+data = read.table("TP5_a23_clas_app.txt")
+```
+
+à faire :
+
+-   Tester l'attribution de variables dans des listes, dans des boucles en R
+
+-   Corriger les méthodes d'estimation des erreurs (recherches à faire)
+
+-   Bien lire le cours pour comprendre les cas d'utilisation de AIC / BIC
+
+-   Chercher des méthodes de classification à utiliser dans les fiches résumées
+
+-   Les appliquer en R
+
+```{r}
+data$y = as.factor(data$y)
+
+aic.best = numeric() # [i] = best for i variables
+aic.local = numeric() # [i] = aic value with the ith variable in testable vars vector
+
+K = 5 # using 5 folds
+n = dim(data)[1]
+folds = sample(K, n, replace = TRUE)
+
+mreg.folds = c()
+
+for (i in 1:K) {
+  # performs analysis using the folds
+  model = multinom(formula = y ~ ., data = data, subset = folds != i)
+
+  # best_bic = stepAIC(model, scope=y ~ ., direction = "both", trace = 0, k = log(n))
+  # mreg.folds = c(mreg.folds, best_bic)
+  mreg.folds = c(mreg.folds, model)
+}
+```
+
+Idée :
+
+-   Grande boucle pour changer les K folds (à faire à la fin)
+
+-   Boucle imbriquée pour séparer les variables avec subset selection
+
+-   Boucle imbriquée pour calculer les AIC du modèle
+
+-   Ajouts de variable discriminés en fonction de AIC
+
+-   Faire ça séparément pour la LDA et la LOGREG
+
+Trouver un moyen d'appliquer la FDA ?
+
+```{r}
+errors = c()
+for (k in 1:K) {
+  pred = predict(model, newdata = data[folds == k,])
+  error_rate = mean(pred != data[folds == k,]$y)
+  errors = c(errors, error_rate)
+}
+
+folds_error_rate = mean(errors)
+
+print(folds_error_rate)
+# print(best_bic.error_rate)
+```
+
+```{r}
+# X27, X46, X47, X48, X49, X50
+```

@@ -1,0 +1,181 @@
+### Imports
+
+```{r}
+library(rpart)
+library(rpart.plot)
+```
+
+```{r}
+data = read.csv("TableF7-3.csv")
+
+train_length = 10000 # demandé par l'énnoncé
+train_indices = sample(length(data[,1]), train_length, replace=FALSE)
+
+train = data[train_indices,]
+test = data[-test_indices,]
+
+length(train[,1])
+```
+
+### Training stuff
+
+```{r}
+tree = rpart(
+  formula = CARDHLDR ~ .,
+  data=train, 
+  method="class"
+  )
+tree_with_selection = rpart(
+  formula = CARDHLDR ~ . -DEFAULT -EXP_INC -SPENDING -LOGSPEND,
+  data=train, 
+  method="class"
+  )
+unleashed_tree = rpart(
+  formula = CARDHLDR ~ . -DEFAULT -EXP_INC -SPENDING -LOGSPEND,
+  data = train, 
+  method = "class",
+  control = rpart.control(cp=0.)
+  )
+rpart.plot(tree)
+rpart.plot(tree_with_selection)
+rpart.plot(unleashed_tree)
+
+fit = unleashed_tree
+```
+
+### Associated Errors
+
+```{r}
+ytest = test$CARDHLDR
+yhat = predict(tree, newdata=test, type="class")
+cat(
+  "Tree using All\n",
+  round( mean(yhat != ytest), 3),
+  "\n",
+  table(yhat, ytest),
+  "\n\n"
+)
+yhat = predict(tree_with_selection, newdata=test, type="class")
+cat(
+  "Tree using Selected features\n",
+  round( mean(yhat != ytest), 3),
+  "\n",
+  table(yhat, ytest),
+  "\n\n"
+)
+yhat = predict(unleashed_tree, newdata=test, type="class")
+cat(
+  "Tree (using Selected) with no growth constraint\n",
+  round( mean(yhat != ytest), 3),
+  "\n"
+)
+table(yhat, ytest)
+```
+
+### Tree Pruning
+
+```{r}
+plotcp(fit) # complexity VS efficiency tradeoff
+```
+
+Recherche d'un paramètre pour le Pruning.
+
+```{r}
+i_optimal = which.min(fit$cptable[, "xerror"])
+threshold = fit$cptable[i_optimal, "xerror"] + fit$cptable[i_optimal, "xstd"]
+
+i_opt2 = which(fit$cptable[, "xerror"] < threshold)[1]
+cp.opt1 = fit$cptable[i_optimal, "CP"]
+cp.opt2 = fit$cptable[i_opt2, "CP"]
+```
+
+```{r}
+pruned_tree = prune(fit, cp = cp.opt1)
+second_pruned_tree = prune(fit, cp = cp.opt2)
+rpart.plot(pruned_tree)
+rpart.plot(second_pruned_tree)
+```
+
+```{r}
+yhat = predict(pruned_tree, newdata=test, type="class")
+cat(
+  "Pruned tree with optimal param (",
+  cp.opt1,
+  ")\n",
+  round( mean(yhat != ytest), 3),
+  "\n",
+  table(yhat, ytest),
+  "\n\n"
+)
+yhat = predict(second_pruned_tree, newdata=test, type="class")
+cat(
+  "Pruned tree with other param (",
+  cp.opt2,
+  ")\n",
+  round( mean(yhat != ytest), 3),
+  "\n"
+)
+table(yhat, ytest)
+```
+
+It did increase both the readability and the performance of the tree.
+
+### ROC Curve !
+
+```{r}
+library("pROC")
+probs = predict(second_pruned_tree, newdata = test, type = "prob")
+hist(probs)
+plot(roc(ytest, probs[, 2]))
+```
+
+### Random Forest
+
+```{r}
+library(randomForest)
+p<-9 # 9 features (because 4 were removed from 13)
+
+df = data
+df$SPENDING = NULL
+df$LOGSPEND = NULL
+df$DEFAULT = NULL
+df$EXP_INC = NULL
+df$CARDHLDR = as.factor(df$CARDHLDR + 1)
+
+df.train = df[train_indices,]
+df.test = df[-train_indices,]
+
+rf1 = randomForest(
+  CARDHLDR ~ .,
+  data = df.train,
+  mtry=p,
+  importance = TRUELes so
+)
+
+rf2 = randomForest(
+  CARDHLDR ~ ., 
+  data = df.train,
+  mtry=sqrt(p)
+)
+```
+
+# Partie 2 sur Boston
+
+```{r}
+library(MASS)
+data = Boston
+
+n = nrow(data)
+n.train = floor(2/3*n)
+index.train = sample(n, n.train, replace = FALSE)
+tr1 = rpart(
+  medv ~ ., 
+  data = data, 
+  subset = index.train, 
+  method = "anova",
+  control = rpart.control(cp = 0.)
+  )
+
+rpart.plot(tr1)
+plotcp(tr1)
+```

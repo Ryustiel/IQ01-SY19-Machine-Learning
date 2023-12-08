@@ -1,0 +1,89 @@
+Studying test dataset !
+
+```{r}
+data = read.csv("income.data.csv")
+```
+
+```{r}
+plot(data)
+```
+
+Modèle de régression :
+
+```{r}
+n = length(data[,1])
+train = sample(c(TRUE, FALSE), n, replace = TRUE, prob = c(0.8, 0.2))
+
+reg = lm(happiness ~ income, data=data, subset = train)
+```
+
+```{r}
+reg$coefficients
+```
+
+```{r}
+plot(happiness ~ income, data=data[!train,])
+abline(reg$coefficients[1], sum(reg$coefficients))
+```
+
+Evaluation !
+
+```{r}
+pred = predict(reg, newdata = data[!train,])
+RSS = mean((pred - data[!train,]$happiness) ^2)
+RSS
+```
+
+Classification LDA + logistic en deux classes : gros et pas-gros
+
+```{r}
+data$y = rep(F, n)
+m = mean(data$happiness)
+data$y[data$happiness > m] = T
+```
+
+```{r}
+library(MASS)
+n = length(data[,1])
+train = sample(c(T, F), n, replace=T, prob=c(0.8, 0.2))
+fit = lda(y ~ income, data=data, subset = train)
+```
+
+Evaluation par la méthode de : proportion de correctement estimés !
+
+```{r}
+pred = predict(fit, newdata = data[!train,])
+missclassification_rate = mean((pred$class != data$y[!train]))
+missclassification_rate
+```
+
+```{r}
+library(pROC)
+plot(roc(data$y[!train], pred$posterior[, 2]))
+```
+
+Avec GLM logreg
+
+```{r}
+fit = glm(formula = y ~ income, data=data[train,], family = binomial)
+pred.prob = predict(fit, newdata = data[!train,], type="response")
+pred = pred.prob > 0.5
+
+mean(pred != data$y[!train])
+```
+
+```{r}
+plot(roc(data$y[!train], pred.prob))
+```
+
+```{r}
+qt(0.975, 398)
+```
+
+```{r}
+reg
+```
+
+```{r}
+
+```

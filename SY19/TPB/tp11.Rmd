@@ -1,0 +1,135 @@
+## TP11
+
+### Problème 1
+
+```{r}
+data_df <- as.data.frame(read.table("letter-recognition.data", header = FALSE))
+data_df$V1 = as.factor(data_df$V1)
+```
+
+Isoler le sous ensemble A J
+
+```{r}
+# %in%
+# trier par lettre, reconnaître de A à J
+names.aj = c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+
+subset.aj = data_df[data_df$V1 %in% names.aj,]
+subset.aj.other = data_df[!data_df$V1 %in% names.aj,]
+```
+
+```{r message=FALSE, warning=FALSE}
+library(kernlab)
+
+WORKING = subset.aj
+
+n = nrow(WORKING)
+train.index = sample(n, size = floor(n * 0.8), replace = FALSE)
+
+X.train = WORKING[train.index, ]
+X.test = WORKING[-train.index, ]
+
+clf = ksvm(V1 ~ ., data = X.train, kernel = "rbfdot", C = 1)
+
+pred = predict(clf, newdata = X.test)
+cat("\n", mean(pred != X.test$V1), "\n")
+
+# un truc interessant peut etre de regarde ou il fait ses erreurs :
+
+table(pred, X.test$V1)[1:12, 1:12]
+```
+
+```{r}
+pred = predict(clf, newdata = subset.aj.other)
+cat("\n", mean(pred != subset.aj.other$V1), "\n")
+
+# un truc interessant peut etre de regarde ou il fait ses erreurs :
+
+table(pred, subset.aj.other$V1)[1:26, 10:26]
+```
+
+Classificateur pour une seule classe ?
+
+```{r}
+letter = "A" # représentant de la classe unique
+X.train2 = X.train
+X.test2 = X.test
+X.train2$V1 = as.factor(ifelse(X.train$V1 == letter, "1", "0"))
+X.test2$V1 = as.factor(ifelse(X.test$V1 == letter, "1", "0"))
+clf = ksvm(V1 ~ ., data = X.train2, kernel = "rbfdot", C = 1)
+
+pred = predict(clf, newdata = subset.aj.other)
+
+table(pred, subset.aj.other$V1)[, 10:26]
+```
+
+Vrai classificateur one-class
+
+```{r}
+occ = ksvm(as.matrix(X.train[, -1]), type = "one-svc", kernel = "rbfdot")
+
+# on cherche les taux de rejet
+pred = predict(occ, newdata = rbind(X.test, subset.aj.other)[, -1])
+pred = ifelse(pred, "in", "out") # en ou hors de la distribution
+y = factor(c(rep("in", nrow(X.test)), rep("out", nrow(subset.aj.other))))
+
+table(pred, y)
+
+y.class = c(X.test$V1, subset.aj.other$V1)
+
+# en fait on va en faire un barplot parce que c'est pas très lisible comme ça
+a = table(y.class, pred)
+b = a[, 2] / (a[, 1] + a[, 2])
+barplot(b)
+```
+
+```{r}
+library(pROC)
+actual_labels = y.class
+predicted_scores = predict(occ, rbind(X.test, subset.aj.other)[, -1], type = "decision")[, 1]
+plot(roc(actual_labels, predicted_scores))
+```
+
+### Partie 2
+
+```{r}
+data = as.data.frame(read.table("flame.txt", header = FALSE))
+
+F1 = data[data$V3 == 1, 1:2]
+F2 = data[data$V3 == 2, 1:2]
+
+plot(F1[, 1], F1[, 2])
+plot(F2[, 1], F2[, 2])
+
+plot(data[,1], data[,2], col=data[,3])
+data$V1 = scale(data$V1)
+data$V2 = scale(data$V2)
+
+X = data[, 1:2]
+```
+
+#### Centres mobiles
+
+```{r}
+km = kmeans(data[, 1:2], 2)
+plot(data[,1], data[,2], col=km$cluster)
+```
+
+#### EM
+
+```{r}
+library(mclust)
+
+res = Mclust(data[, 1:2]) # G = 3
+plot(res, what = "classification")
+plot(X, col=ifelse(res$classification == 1, 1, 2))
+```
+
+#### Kernel K Means
+
+```{r}
+library(kernlab)
+kkm = kkmeans(X, centers = 2, kernel = "rbfdot")
+plot(X, col = kkm)
+extCriteria(y, as.vector(kkm), crit = "Rand")
+```

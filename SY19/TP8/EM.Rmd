@@ -1,0 +1,133 @@
+### TP8
+
+### Algorithme EM
+
+```{r}
+# parametres des lois
+mu = 2
+sigma = 1.5
+a = 10
+
+n = 100 # sampling parameters
+pi = 0.95
+y = sample(c(1, 0), size = n, prob = c(pi, 1 - pi), replace = TRUE)
+
+# x = y * rnorm(n, mean = mu, sd = sigma) + (1 - y) * runif(n, min = -a, max = a)
+x = ifelse(y, rnorm(n, mean = mu, sd = sigma), runif(n, min = -a, max = a))
+
+# "si vous faites un test de normalité ça pourrait échouer à cause des 5% qui peuvent potentiellement mettre des valeurs très grandes"
+hist(x)
+```
+
+```{r}
+# calcul de la fonction de log-vraissemblance
+loglik = function(x, theta) {
+  pi.local = theta[1]
+  mu.local = theta[2]
+  sig.local = theta[3]
+  sum(log(pi * dnorm(x, mean = mu.local, sd = sig.local) + (1 - pi) * cc))
+}
+
+tol = 1e-5
+ll = loglik(x, theta)
+ll.new = 11 + tol + 1
+```
+
+```{r}
+# conteneur des iterations
+theta_reference = c(pi, mu, sigma)
+theta = c(0.8, 1, 1) # parametres initiaux nuls pour voir si ça reconverge
+cat(theta, "\n")
+
+cc = 1 / (2 * a) # donné dans l'énoncé
+
+# mu, sigma, pi >> mis à jour à chaque itération
+
+mxiter = 10
+ll = loglik(x, theta)
+ll.new = ll + tol + 1
+
+while (ll.new > ll + tol & mxiter > 0) {
+  # unpacking
+  pi.local = theta[1]
+  mu.local = theta[2]
+  sigma.local = theta[3]
+  
+  # calcul de qi (en haut de la page 2)
+  q = dnorm(x, mu.local, sigma.local) * pi.local
+  q = q / (q + (1 - pi.local) * cc)
+  
+  # calcul des nouvelles valeurs
+  pi_ = mean(q)
+  mu_ = sum(q * x) / sum(q)
+  sigma_ = sqrt(
+    sum( q * (x - mu_)**2 ) / sum(q)
+  )
+  
+  # iterator update
+  theta = c(pi_, mu_, sigma_)
+  
+  cat(theta, "\n")
+  
+  # stop conditions
+  ll = ll.new
+  ll.new = loglik(ll, theta)
+  
+  mxiter = mxiter - 1
+}
+
+cat("\n\nREF : ", theta_reference, "\n\nRESULTAT FINAL : ")
+theta
+```
+
+### Optimisation
+
+```{r}
+theta = c(pi, mu, sigma)
+
+# fnscale = -1 car multiplie par -1
+
+# optim estime le gradient, on pourrait aussi estimer la hessienne
+a = optim(
+  theta,
+  loglik,
+  method = "L-BFGS-B",
+  control = list(fnscale = -1),
+  lower = c(0.001),
+  upper = c(0.999, Inf, Inf),
+  x = x
+)
+
+cat(sd(x), "\n")
+a$par
+```
+
+## Partie II
+
+#### Application à des problèmes de classification non supervisée
+
+```{r}
+library(mclust)
+
+data = read.table("wine.txt")
+
+x = data[, -1]
+
+res = Mclust(x)
+
+# "il a fait un mélange gaussien (ellipsoidal, meme orientation)"
+summary(res)
+
+plot(res, what="BIC")
+
+# "BIC est une sorte de likelihood contrebalancée par nb de parametres"
+plot(res, what = "classification", dimens = 1:7)
+plot(res, what = "uncertainty", dimens = 1:7)
+```
+
+```{r}
+# Est ce que notre classification qu'on a, par rapport aux classifications qu'on avait à la base ?
+
+# regarder si les classes correspondent
+adjustedRandIndex(data[, 1], res$classification)
+```

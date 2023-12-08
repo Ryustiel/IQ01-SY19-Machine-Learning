@@ -1,0 +1,114 @@
+### TP10
+
+```{r}
+load('data_expressions.RData')
+```
+
+Contient un ensemble d'images (en niveaux de gris) qu'on peut afficher comme ça :
+
+```{r}
+for (i in 1:15) {
+  I<-matrix(X[i,],60,70)
+  I1 <- apply(I, 1, rev)
+  image(t(I1),col=gray(0:255 / 255))
+}
+```
+
+```{r}
+# length(table(X[, i])) == 1 # table compte le nombre de chaque valeurs
+
+variance = apply(X, MARGIN=2, FUN=sd)
+data = X[, variance != 0]
+
+# on peut mettre des seuils type variance > 1 pour éliminer des pixels qui varient peu
+```
+
+```{r}
+pca = prcomp(data)
+```
+
+```{r}
+# summary(pca)
+plot(pca$sdev) # si on en prend 100 on capture la majorité de la variance
+pca.selected = pca$x[, 1:100]
+
+dim(pca$x) # 216 = min(ncols, nrows)
+```
+
+```{r}
+n = nrow(X)
+n.train = floor(3/4 * n)
+idx.train = sample(n, size = n.train, replace = FALSE)
+
+# Selection des variables
+
+# apply(y, FUN = function(x) {ifelse(x %in% c("joy", "surprise"), "joy", "disgust")})
+
+Y = factor(ifelse((y == "joy") | (y == "surprise"), "pos", "neg"))
+
+X.train = X[idx.train, ]
+Y.train = Y[idx.train]
+X.test = pca$x[-idx.train, 1:100] # normalement on utilise la moyenne et la variance de la pca sur X.train
+Y.test = Y[-idx.train]
+```
+
+```{r}
+library(kernlab)
+
+pca = prcomp(X.train)
+pca.train = pca$x[, 1:100]
+
+ksvm(pca.train, Y.train)
+```
+
+```{r}
+KERNEL_NAME = "rbfdot" # vanilladot, rbfdot
+
+eval_it = function(C) {
+  process = function() {
+    clf = ksvm(pca.train, Y.train, kernel = KERNEL_NAME, C = C, cross = 4)
+    cross(clf)
+  }
+  mean(replicate(10, process()))
+}
+
+# Cs = c(1e-3, 1e-2, 1e-1, 1, 10, 100)
+Cs = 10^seq(-3, 2, by = 1)
+
+errors = sapply(Cs, FUN = eval_it)
+plot(errors)
+```
+
+```{r}
+Copt = Cs[which.min(errors)]
+Copt
+```
+
+```{r}
+clf = ksvm(pca.train, Y.train, kernel = KERNEL_NAME, C = Copt, cross = 4)
+pred = predict(clf, newdata = X.test)
+mean(pred != Y.test)
+```
+
+```{r}
+pred = predict(clf, newdata = X.test, type = "decision")
+
+library(pROC)
+plot(roc(Y.test, pred))
+```
+
+### Question 4
+
+(tester plusieurs autres modèles)
+
+```{r}
+library(randomForest)
+df = data.frame(X = X.train, Y = Y.train) # les dimensions sont pas bonnes !
+df.test = data.frame(X = X.test, Y = Y.test)
+
+clf.rf = randomForest(Y ~ ., data = df)
+
+pred.rf = predict(clf.rf, newdata = df.test)
+
+mean(pred.rf != Y.test)
+```

@@ -1,0 +1,210 @@
+# SY19 - TP5
+
+### Raphael Nguyen \|\| Tristan Hucher
+
+## Préparation de l'environnement
+
+```{r}
+# set current directory
+library(MASS)
+```
+
+# Problème de Classification
+
+#### Importation des données
+
+```{r}
+data = read.table("TP5_a23_clas_app.txt")
+```
+
+#### Exploration des données, remarques
+
+```{r}
+data$y
+```
+
+Il y a 3 classes différentes à prédire
+
+=\> On ne peut pas utiliser directement la régression logistique car il y a plus de 2 classes.
+
+On pourrait utiliser un modèle de type voting-KNN, un LDA,\
+Ou plusieurs régressions logistiques sur deux problèmes de type : [class 1 vs class 2 or 3] + [class 2 vs class 1 or 3] et combiner les solutions de manière à obtenir une classification en 3 classes.
+
+Postulats LDA :
+
+-   Indépendance des mesures
+
+-   Distribution normale au sein d'une classe
+
+-   Co-variance identique des mesures entre chaque classe
+
+On vérifie ça
+
+```{r}
+# Test de Shapiro-Wilk pour la normalité
+for (class in unique(data$y)) {
+  break # STOP STATEMENT
+    for (feature in colnames(data)[-which(names(data) %in% c("y", "y12", "y23"))]) {
+        subset_data <- data[data$y == class, feature]
+        p_value <- shapiro.test(subset_data)$p.value
+        print(paste("Class:", class, "- Feature:", feature, "- p-value:", p_value))
+    }
+}
+```
+
+#### Transformation des données
+
+```{r}
+# séparation en training VS test
+
+train_indices = sample(
+  nrow(data), 
+  size = floor(nrow(data) * 0.8), 
+  replace = FALSE
+)
+
+data$y12 = factor(ifelse(data$y == 3, "3", "1 or 2"), levels=c("1 or 2", "3")) # 1 si y = 3 sinon 0
+data$y23 = factor(ifelse(data$y == 1, "1", "2 or 3"), levels=c("1", "2 or 3"))
+data$y = factor(data$y, levels=c("1", "2", "3"))
+
+train = data[train_indices,]
+test = data[-train_indices,]
+```
+
+#### LDA
+
+```{r}
+# décrire le modèle utilisé, expliquer les paramètres
+
+lda = lda(formula = y ~ . - y12 - y23, data = train)
+
+lda.predict = predict(lda, newdata = test)$class
+mean(lda.predict != test$y)
+```
+
+#### Multinomial Logistic Regression
+
+```{r}
+library(nnet)
+mreg = multinom(formula = y ~ . - y12 - y23, data = train)
+
+mreg.predict = predict(mreg, newdata = test)
+mean(mreg.predict != test$y)
+```
+
+#### Multidimensional Spline Classifier
+
+```{r}
+
+```
+
+#### Logistic Regression x2
+
+```{r}
+reg23 = glm(formula = y23 ~ . - y - y12, data = train, family = binomial)
+
+reg23.probabilities = predict(reg23, newdata = test, type="response")
+reg23.predict = factor(ifelse(reg23.probabilities < 0.5, "1", "2 or 3"))
+mean(reg23.predict != test$y23) # 1 = erreur, 0 = reussite
+```
+
+```{r}
+reg12 = glm(formula = y12 ~ . - y - y23, data = train, family = binomial)
+
+reg12.probabilities = predict(reg12, newdata = test, type="response")
+reg12.predict = factor(ifelse(reg12.probabilities < 0.5, "3", "1 or 2"))
+mean(reg12.predict != test$y12)
+```
+
+```{r}
+# association des donnees precedentes
+reg2.predict = factor(
+  ifelse(
+    reg23.predict == "1", 
+    "1",
+    ifelse(
+      reg12.predict == "3",
+      "3",
+      "2"
+    )
+  ),
+  levels = c("1", "2", "3")
+)
+mean(reg2.predict != test$y)
+```
+
+#### Sélection des Prédicteurs
+
+```{r}
+# AIC et BIC
+n = length(data)
+
+print("starting BIC on mreg")
+#mreg.bic = stepAIC(mreg, scope=y ~ . - y12 - y23, direction = "both", trace = 0, k = log(n))
+
+#lda.bic = stepAIC(lda, scope=y ~ . - y12 - y23, direction = "both", trace = 0, k = log(n))
+print("BIC done")
+```
+
+##### Using K-Folds
+
+```{r}
+K = 10 # using 10 folds
+n = dim(data)[1]
+folds = sample(K, n, replace = TRUE)
+
+mreg.folds = rep(0, K)
+
+for (i in 1:K) {
+  # performs analysis using the folds
+  mreg.folds[i] = multinom(formula = y ~ . - y12 - y23, data = data, subset = folds != i)
+  mreg.folds[i].bic = stepAIC(mreg., scope=y ~ . - y12 - y23, direction = "both", trace = 0, k = log(n))
+}
+```
+
+à faire :
+
+-   Tester l'attribution de variables dans des listes, dans des boucles en R
+
+-   Corriger les méthodes d'estimation des erreurs (recherches à faire)
+
+-   Bien lire le cours pour comprendre les cas d'utilisation de AIC / BIC
+
+-   Chercher des méthodes de classification à utiliser dans les fiches résumées
+
+-   Les appliquer en R
+
+Idée :
+
+-   Grande boucle pour changer les K folds (à faire à la fin)
+
+-   Boucle imbriquée pour séparer les variables avec subset selection
+
+-   Boucle imbriquée pour calculer les AIC du modèle
+
+-   Ajouts de variable discriminés en fonction de AIC
+
+-   Faire ça séparément pour la LDA et la LOGREG
+
+Trouver un moyen d'appliquer la FDA ?
+
+#### Evaluation et Comparaison
+
+```{r}
+mreg.bic.predict = predict(mreg.aic, newdata = test)
+mreg.bic.rms = mean(mreg.aic.predict != test$y)
+```
+
+```{r}
+print("mreg bic :", mreg.bic.rms)
+print("mreg rms :", mreg.rms)
+```
+
+```{r}
+library("pROC")
+
+# plot(multiclass.roc(as.numeric(test$y), as.numeric(lda.predict)))
+#plot(multiclass.roc(test$y, mreg.predict), add = TRUE, color="red")
+```
+
+# Problème de Régression

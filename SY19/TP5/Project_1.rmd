@@ -1,0 +1,817 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+TP5 : Régression et Classification
+
+Dans le cadre de l'UV SY19, nous devons proposer les meilleurs
+prédicteurs possibles pour un problème de classification et un problème
+de régression. Commençons par le problème de regression.
+
+On récupère le set de données et on charge les librairies dont on va
+avoir besoin.
+
+```{r}
+donnees <- read.table("TP5_a23_reg_app.txt")
+library(splines)
+library(MASS)
+library(glmnet)
+library(dplyr)
+library(matrixStats)
+library(caret)
+library(FNN)
+library(kernlab)
+library(randomForest)
+```
+
+on va explorer les données, et on remarque qu'on ne peut dire grand
+chose en affichant juste la variable à expliquer en fonction des
+variables (graphique 1). On a donc manipuler les variables dans tous les
+sens pour faire ressortir des liens pertinents avec y. Par exemple : en
+prenant la racine carré de la racine carré du ratio entre les variables
+2 à 2, on isole un peu certaines données (graphique 2).
+
+```{r}
+#Exploration des données :
+#boxplot(donnees[,-101])
+for (i in 1:99){
+  #plot(donnees[,i],donnees[,101])
+  #plot((abs(donnees[,i])/abs(donnees[,i+1]))^0.25,donnees[,101]^2)
+}
+
+par(mfrow = c(1,2))
+# Premier graphique
+plot(donnees[, 98], donnees[, 101], main = "Graphique 1", xlab = "X98", ylab = "y")
+
+# Deuxième graphique
+plot((abs(donnees[, 98]) / abs(donnees[, 99]))^0.25, donnees[, 101]^2, main = "Graphique 2", xlab = "(abs(X98) / abs(X99))^0.25", ylab = "y")
+```
+
+On va a présent créer des echantillons d'apprentissages et de test et
+des folds pour la cross validation
+
+```{r}
+n <- nrow(donnees)
+p <- ncol(donnees)
+
+n.train <- floor(4/5 * n)
+index.train <- sample(n,size = n.train , replace = FALSE)
+donnees.train <- donnees[index.train, ] 
+donnees.test <- donnees[-index.train, ]
+
+k <-10
+fold <- sample(k,n,replace = TRUE)
+```
+
+On va ajouter de nouvelles variables qui pourront permettre de mieux
+expliquer y puis on va les selectionner avec le critère BIC pour avoir
+que celles qui sont pertinentes. Nous avons également tester d'ajouter
+des splines naturelles mais ca n'apportait rien en terme de MSE.
+
+```{r eval = FALSE}
+# 
+donnees2 <- donnees[,-101]
+n_colonnes <- ncol(donnees)
+
+# Ajouter les colonnes au carré
+for (i in 1:n_colonnes-1) {
+  nom_colonne <- colnames(donnees2)[i]
+  nom_colonne2 <- colnames(donnees2)[i+1]
+  donnees2[paste0(nom_colonne, "/",nom_colonne2)] <- (abs(donnees2[,i])/abs(donnees2[,i+1]))^0.25
+}
+donnees2 <- cbind(donnees2, y = donnees[,"y"]) 
+
+model_lm = lm(y~.-y, data = donnees2)
+model_BIC <- stepAIC(model_lm,scope=y~.-y,direction="both",k=log(nrow(donnees2)))
+
+#model_BIC <- stepAIC(model_lm,scope=y~.+ns(X2,5)+ns(X4,5)+ns(X6,5)+ns(X8,5)+ns(X10,5)+ns(X12,5)+ns(X13,5)+ns(X14,5)+ns(X15,5)+ns(X16,5)+ns(X18,5)+ns(X20,5)+ns(X21,5)+ns(X22,5)+ns(X24,5)+ns(X25,5)+ns(X26,5)+ns(X29,5)+ns(X30,5)+ns(X31,5)+ns(X35,5)+ns(X37,5)+ns(X40,5)+ns(X41,5)+ns(X42,5)+ns(X43,5)+ns(X46,5)+ns(X47,5)+ns(X49,5)+ns(X50,5)+ns(X51,5)+ns(X52,5)+ns(X53,5)+ns(X55,5)+ns(X56,5)+ns(X57,5)+ns(X58,5)+ns(X59,5)+ns(X65,5)+ns(X66,5)+ns(X67,5)+ns(X68,5)+ns(X70,5)+ns(X71,5)+ns(X74,5)+ns(X76,5)+ns(X79,5)+ns(X80,5)+ns(X82,5)+ns(X83,5)+ns(X84,5)+ns(X86,5)+ns(X91,5)+ns(X92,5)+ns(X93,5)+ns(X94,5)+ns(X97,5)+ns(X98,5)+ns(X100,5)-y,direction="both",k=log(log(nrow(donnees2))))
+
+```
+
+On crée un jeu de données donnees3 qui contient les variables
+selectionnées.
+
+```{r}
+options(max.print = 2000)
+summary(model_BIC)
+
+donnees3<-donnees2[
+   ,c(
+    "X4","X6","X8","X10","X12","X13","X14", 
+    "X16","X18","X20","X21","X22","X24","X26","X30","X31",
+    "X32","X35","X37","X42","X43","X46","X47", 
+    "X48","X50","X51","X52","X53","X55","X56","X57","X59", 
+    "X65","X66","X67","X70","X71","X74","X80", 
+    "X82","X83","X84","X90","X91","X92","X93","X94","X95","X96", 
+    "X100","X12/X13","X18/X19", 
+    "X19/X20","X32/X33","X37/X38",
+    "X45/X46","X48/X49","X49/X50","X56/X57", 
+    "X63/X64", 
+    "X70/X71","X80/X81","X82/X83","X83/X84", 
+    "X96/X97","X97/X98", 
+    "X99/X100","y")]
+```
+
+On va tester plusieurs modèles et à chaque fois on testera des
+variantes. On testera : - juste les variables de base - les variables
+augmentées puis selectionnées par BIC - normalisation des données en
+entrée
+
+```{r}
+#Linear model : 
+MSE <- rep(0,k)
+donnees2<-donnees
+for (i in 1:k){
+  
+  
+  #traitement 
+  
+  #sans normalisation 
+  #X.app <- data.frame(donnees2[fold !=i,])
+  #X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  sd_cols <- colSds(as.matrix(donnees2[fold !=i,-101]))
+  mean_cols <-colMeans(donnees2[fold !=i,-101])
+  
+  X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-101], 2, mean_cols, `-`))/sd_cols))
+  X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-101], 2, mean_cols, `-`))/sd_cols))
+  
+  X.app <- cbind(X.app, y = donnees2[fold !=i,"y"])
+  X.tst <- cbind(X.tst, y = donnees2[fold ==i,"y"])
+  
+  #Modèle
+
+  modellm <- lm(y~., data = X.app)
+  pred_lm<-predict(modellm,newdata=X.tst)
+  MSE[i] <- mean((X.tst$y-pred_lm)^2)
+} 
+mean(MSE)
+#normalisation inutile ici 
+
+#MSE = 200.1338 pour les variables de bases
+#MSE = 114.0967 en prenant les variables selectionnées
+```
+
+```{r}
+#Linear model , Ridge , Lasso , Elastic Net
+MSE_LM<- rep(0,k)
+MSE_Ridge <- rep(0,k)
+MSE_Lasso <- rep(0,k)
+MSE_Ennet <- rep(0,k)
+donnees2<-donnees3
+for (i in 1:k){
+
+  #traitement
+
+  #sans normalisation 
+  #X.app <- data.frame(donnees2[fold !=i,])
+  #X.tst <- data.frame(donnees2[fold ==i,])
+
+  #avec normalisation
+  
+  sd_cols <- colSds(as.matrix(donnees2[fold !=i,-68]))
+  mean_cols <-colMeans(donnees2[fold !=i,-68])
+  
+  X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-68], 2, mean_cols, `-`))/sd_cols))
+  X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-68], 2, mean_cols, `-`))/sd_cols))
+  
+  X.app <- cbind(X.app, y = donnees2[fold !=i,"y"]) #ajout du Y qu'on avait enlevé
+  X.tst <- cbind(X.tst, y = donnees2[fold ==i,"y"])
+  
+  x <- model.matrix(y~.,X.app)
+  x_test <- model.matrix(y~.,X.tst)
+  y_train <- X.app[,"y"]
+  
+  #Linear model 
+  modellm <- lm(y~., data = X.app)
+  pred_lm<-predict(modellm,newdata=X.tst)
+  MSE_LM[i] <- mean((X.tst$y-pred_lm)^2)
+  
+  #ridge
+  cv.out<-cv.glmnet(x,y_train,alpha=0)
+  
+  model_ridge<-glmnet(x,y_train,lambda=cv.out$lambda.min,alpha=0)
+  pred_rigde<-predict(model_ridge,s=cv.out$lambda.min,newx=x_test)
+  MSE_Ridge[i] <- mean(((X.tst$y-pred_rigde)^2))
+
+  #Lasso 
+  cv.out_lasso<-cv.glmnet(x,y_train,alpha=1)
+  
+  model_lasso<-glmnet(x,y_train,lambda=cv.out_lasso$lambda.min,alpha=1)
+  pred_lasso<-predict(model_lasso,s=cv.out_lasso$lambda.min,newx=x_test)
+  MSE_Lasso[i] <- mean((X.tst$y-pred_lasso)^2)
+  
+  #elastic-net 
+
+  train_control <- trainControl(method = "repeatedcv",
+                              number = 5,
+                              repeats = 5,
+                              search = "random",
+                              verboseIter = FALSE)
+  
+  elastic_net_model <- train(y~.,
+                           data = X.app,
+                           method = "glmnet",
+                           tuneLength = 25,
+                           trControl = train_control)
+  
+  pred_enet <- predict(elastic_net_model, newdata = X.tst)
+  MSE_Ennet[i] <- mean(((X.tst$y-pred_enet)^2))
+} 
+mean(MSE_LM)
+mean(MSE_Ridge)
+mean(MSE_Lasso)
+mean(MSE_Ennet)
+
+#résultats : 
+
+#Variables Non normalisées :
+#LM : 200.1338 ; Ridge : 205.7189 ; Lasso : 190.4084 ; Elastic-net : 192.0821
+
+#Variables Non normalisées :
+#LM : 200.1338 ; Ridge : 205.7189 ; Lasso : 190.3206 ; Elastic-net : 192.582
+
+#variables selectionnées et non Normalisées
+#LM : 114.0967 ; Ridge : 120.3131 ; Lasso : 113.991 ; Elastic-net : 113.9955
+
+```
+
+Pour l'instant, on a la méthode Lasso sur les variables selectionnées
+qui donne les meilleurs prédictions. Il reste à tester les k plus
+proches voisins :
+
+```{r}
+#test de KNN regression
+
+#test du meilleur nombre de voisin :
+Ks <- 1:25
+MSEs <- rep(0, length(Ks))
+for (i in 1:length(Ks)){
+  
+  K <-Ks[i]
+  reg <- knn.reg(donnees.train[,-101] , donnees.test[,-101] , donnees.train[,101], k = K)
+  MSE <- mean((reg$pred - donnees.test[,101])^2)
+  MSEs[i] <- MSE
+}
+MSEs
+#Pour K = 12 on a la plus faible MSE qui est de 2619.188
+```
+
+On va maintenant essayer de faire une PCA puis de refaire des modèles :
+
+```{r}
+#PCA
+ 
+MSE <- rep(0,k)
+MSE_ridge <- rep(0,k)
+MSE_lasso <- rep(0,k)
+
+donnees2 <- donnees3
+for (i in 1:k){
+  
+  #traitement (normalisation ou ajout de log sur Y)
+  
+  #sans normalisation 
+  X.app <- data.frame(donnees2[fold !=i,])
+  X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  #sd_cols <- colSds(as.matrix(donnees2[fold !=i,-68]))
+  #mean_cols <-colMeans(donnees2[fold !=i,-68])
+  
+  #X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-68], 2, mean_cols, `-`))/sd_cols))
+  #X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-68], 2, mean_cols, `-`))/sd_cols))
+  
+  #X.app <- cbind(X.app, y = donnees2[fold !=i,68]) #ajout du Y qu'on avait enlevé
+  #X.tst <- cbind(X.tst, y = donnees2[fold ==i,68])
+  
+
+  #PCA 
+  pca<-princomp(X.app[,-68])
+  
+  
+  Z<- as.data.frame(pca$scores)
+  Z<- cbind(Z, y = donnees2[fold !=i,68])
+  
+  Z_tst<-as.data.frame(predict(object = pca, newdata = X.tst[,-68]))
+  Z_tst<- cbind(Z_tst, y = donnees2[fold ==i,68])
+  
+  
+  
+  x <- model.matrix(y~.,Z)
+  x_test <- model.matrix(y~.,Z_tst)
+  y_train <- Z[,"y"]
+  
+  
+  #LM
+  modellm_PCA <- lm(y~., data = Z)
+  pred_lm_PCA<-predict(modellm_PCA,newdata=Z_tst)
+  MSE[i] <- mean((Z_tst$y-pred_lm_PCA)^2)
+  
+  #Ridge
+  
+  cv.out<-cv.glmnet(x,y_train,alpha=0)
+  
+  model_ridge<-glmnet(x,y_train,lambda=cv.out$lambda.min,alpha=0)
+  pred_rigde<-predict(model_ridge,s=cv.out$lambda.min,newx=x_test)
+  MSE_ridge[i] <- mean(((X.tst$y-pred_rigde)^2))
+  
+  #Lasso
+  
+  cv.out_lasso<-cv.glmnet(x,y_train,alpha=1)
+  
+  model_lasso<-glmnet(x,y_train,lambda=cv.out_lasso$lambda.min,alpha=1)
+  pred_lasso<-predict(model_lasso,s=cv.out_lasso$lambda.min,newx=x_test)
+  MSE_lasso[i] <- mean((X.tst$y-pred_lasso)^2)
+  
+} 
+mean(MSE)
+mean(MSE_ridge)
+mean(MSE_lasso)
+
+#PCA : 
+#pour les variables de base non normalisées 
+#LM : 207.7374 Ridge : 208.8728 Lasso : 208.0938
+
+#pour les variables de base normalisées 
+#LM : 207.7374 Ridge : 209.1906 Lasso : 206.8464
+
+#pour les variables selectionnées non normalisées 
+#LM : 115.9955 Ridge : 120.4386 Lasso : 117.6976
+
+#pour les variables selectionnées normalisées 
+#LM : 115.9955 Ridge : 119.3139 Lasso : 116.2225
+
+#pour les variables selectionnées normalisées et on prend pas tous les axes principaux pour pas overfit
+#LM : 115.9955 Ridge : 119.3139 Lasso : 116.2225
+
+```
+
+On obtient quasiment les mêmes résultats, ce qui est cohérent car la PCA
+effectue des transformations linéaires des variables de base. On va
+maintenant tester de prédire avec du bagging et des forêt aléatoires :
+
+```{r}
+#bagging 
+
+MSE_bag <- rep(0,k)
+MSE_foret <- rep(0,k)
+donnees2<-donnees
+p<-ncol(donnees2)-1
+
+for (i in 1:k){
+  
+  
+  #traitement (normalisation ou ajout de log sur Y)
+  
+  #sans normalisation 
+  #X.app <- data.frame(donnees2[fold !=i,])
+  #X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  sd_cols <- colSds(as.matrix(donnees2[fold !=i,-101]))
+  mean_cols <-colMeans(donnees2[fold !=i,-101])
+  
+  X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-101], 2, mean_cols, `-`))/sd_cols))
+  X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-101], 2, mean_cols, `-`))/sd_cols))
+  
+  X.app <- cbind(X.app, y = donnees2[fold !=i,"y"]) #ajout du Y qu'on avait enlevé
+  X.tst <- cbind(X.tst, y = donnees2[fold ==i,"y"])
+  
+  
+  #ajout d'un log sur Y pour tester
+  
+  #X.app[,"y"]<- log(X.app[,"y"])
+  #X.tst[,"y"]<- log(X.tst[,"y"])
+ 
+  bag.donnees2=randomForest(y~.,data=X.app,
+  mtry=p)
+  pred_bagging=predict(bag.donnees2,newdata=X.tst,type="response")
+  MSE_bag[i] <- mean((X.tst$y-pred_bagging)^2)
+  
+  bag.donnees3=randomForest(y~.,data=X.app,
+  mtry=p/2,importance=TRUE)
+  pred_bagging2=predict(bag.donnees3,newdata=X.tst,type="response")
+  MSE_foret[i] <- mean((X.tst$y-pred_bagging2)^2)
+} 
+mean(MSE_bag)
+mean(MSE_foret)
+
+#bagging : 
+# 2401.16/2404.474 pour les variables de base
+# 2224.836/2228.035 avec variables selectionnées
+
+#Random Forest
+# 2441.209/2434.542 pour les variables de base
+# 2272.431/2263.226 avec variables selectionnées
+```
+
+Partie classification :
+
+On charge les données
+
+```{r}
+donnees <- read.table("TP5_a23_clas_app.txt")
+#summary(donnees)
+```
+
+```{r}
+#Exploration des données :
+#boxplot(donnees)
+for (i in 1:50){
+  #plot(donnees[,i],donnees[,i+1],col = donnees$y)
+}
+#exemple 
+plot(donnees[,38],donnees[,39],col = donnees$y)
+
+```
+
+On remarque que les données vertes sont beaucoup plus dispersé mais que
+peu importe la classe les données ont l'air de suivre une distribution
+normale pour certaines variables. QDA devrait être bien mais le peu
+d'obervations risque de poser problème.
+
+```{r}
+#observons la dispertion selon chaque classe :
+
+options(repr.plot.width = 10, repr.plot.height = 10)
+boxplot_data <- list()
+numeric_vars <- names(donnees)[sapply(donnees, is.numeric)]
+
+for (var in numeric_vars) {
+  data_by_class <- split(donnees[[var]], donnees$y)
+  boxplot_data[[var]] <- data_by_class
+}
+for (var in numeric_vars) {
+  #boxplot(boxplot_data[[var]], col = rainbow(length(boxplot_data[[var]]),start = 0, end = 0.8))
+  #title(paste("Boxplot de", var))
+}
+#exemple : 
+boxplot(boxplot_data[[numeric_vars[1]]], col = rainbow(length(boxplot_data[[numeric_vars[1]]]),start = 0, end = 0.8))
+title(paste("Boxplot de", numeric_vars[1]))
+```
+
+La dispersion selon les classes à l'air d'être quasiment la même. QDA
+devrait bien marché mais le peu de données et le grand nombre de
+prédicteurs risquent de poser problème. Regardons la répartition des
+classes.
+
+```{r}
+length(donnees[donnees$y == 3,"y"])/length(donnees[,"y"]) * 100
+# ==class 1 : 18%
+# ==class 2 : 44%
+# ==class 3 : 38%
+```
+
+On va a présent créer des echantillons d'apprentissages et de test et
+des folds pour la cross validation
+
+```{r}
+
+n <- nrow(donnees)
+k <-10
+fold <- sample(k,n,replace = TRUE)
+
+
+n.train <- floor(4/5 * n)
+index.train <- sample(n,size = n.train , replace = FALSE)
+donnees.train <- donnees[index.train, ] 
+donnees.test <- donnees[-index.train, ]
+
+donnees$y<-as.factor(donnees$y)
+```
+
+On va faire de la selection de variable pour tenter plus tard
+d'améliorer QDA.
+
+```{r}
+#selection de variable avec critère AIC on a déjà pas bcp de variables de BIC en enleverai trop : 
+model_lm <- multinom(y ~ . ,data = donnees , family = binomial)
+model_AIC <- stepAIC(model_lm,scope=y~.-y,direction="both")
+#summary(model_AIC)
+
+donnees3<-donnees[,c("X4", "X6", "X13", "X24", "X27", "X29", "X30", "X32", "X33", "X46", "X47", "X48","X49","X50","y")]
+```
+
+On va dans un premier temps tester #Linear model , QDA, LDA et LDA_naif
+et Claffisieur baesien, avec ou sans selection de variable préalable :
+
+```{r}
+library(naivebayes)
+
+MSE <- rep(0,k)
+MSE_qda <- rep(0,k)
+MSE_lda <- rep(0,k)
+MSE_BN <- rep(0,k)
+
+donnees2<-donnees3
+
+for (i in 1:k){
+  
+  #sans normalisation 
+  #X.app <- data.frame(donnees2[fold !=i,])
+  #X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  sd_cols <- colSds(as.matrix(donnees2[fold !=i,-15]))
+  mean_cols <-colMeans(donnees2[fold !=i,-15])
+  
+  X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-15], 2, mean_cols, `-`))/sd_cols))
+  X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-15], 2, mean_cols, `-`))/sd_cols))
+  
+  X.app <- cbind(X.app, y = donnees2[fold !=i,"y"]) #ajout du Y qu'on avait enlevé
+  X.tst <- cbind(X.tst, y = donnees2[fold ==i,"y"])
+  
+  model_lm <- multinom(y ~ . ,data = X.app , family = binomial)
+  model_qda = qda(y~.,data=X.app)
+  model_lda = lda(y~.,data=X.app)
+  model_BN = naive_bayes(y~.,data=X.app)
+  
+  pred <- predict(model_lm ,newdata = X.tst)
+  pred_qda<-predict(model_qda,newdata=X.tst)
+  pred_lda<-predict(model_lda,newdata=X.tst)
+  pred_BN<-predict(model_BN,newdata=X.tst)
+  
+  MSE[i] <- mean(X.tst$y == pred)
+  MSE_qda[i] <- mean(X.tst$y == pred_qda$class)
+  MSE_lda[i] <- mean(X.tst$y == pred_lda$class)
+  MSE_BN[i] <- mean(X.tst$y == pred_BN)
+
+}
+mean(MSE)
+mean(MSE_qda)
+mean(MSE_lda) 
+mean(MSE_BN)
+
+#sans normalisation sans selection de variable 
+#LM : 0.6063808 ; QDA : 0.6582285 LDA : 0.5698352 BN : 0.637276
+
+#avec normalisation sans selection de variable 
+#LM : 0.6063808 ; QDA : 0.6582285 LDA : 0.5698352 BN : 0.637276
+
+#avec normalisation avec selection de variables 
+#LM : 0.6026329 ; QDA : 0.6246337 LDA : 0.6114197 BN : 0.6218817
+
+
+```
+
+On va aussi tester KNN
+
+```{r}
+#test de KNN regression (on va tester avec normalisation ou non)
+
+#test du meilleur nombre de voisin :
+Ks <- 1:25
+MSEs <- rep(0, length(Ks))
+for (i in 1:length(Ks)){
+  
+  K <-Ks[i]
+  pred_knn <- knn(train = donnees.train[,-51] ,test = donnees.test[,-51] , cl = donnees.train[,51], k = K)
+  MSE <- mean(donnees.test$y == pred_knn)
+  MSEs[i] <- MSE
+}
+max(MSEs)
+#0.58 pour le meilleur nombre de voisin 
+```
+
+Et les random forets
+
+```{r}
+#random forest 
+
+MSE <- rep(0,k)
+donnees2<-donnees
+p<-ncol(donnees2)-1
+
+for (i in 1:k){
+  
+  
+  #traitement (normalisation ou ajout de log sur Y)
+  
+  #sans normalisation 
+  #X.app <- data.frame(donnees2[fold !=i,])
+  #X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  sd_cols <- colSds(as.matrix(donnees2[fold !=i,-51]))
+  mean_cols <-colMeans(donnees2[fold !=i,-51])
+  
+  X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-51], 2, mean_cols, `-`))/sd_cols))
+  X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-51], 2, mean_cols, `-`))/sd_cols))
+  
+  X.app <- cbind(X.app, y = donnees2[fold !=i,"y"]) #ajout du Y qu'on avait enlevé
+  X.tst <- cbind(X.tst, y = donnees2[fold ==i,"y"])
+  
+  
+
+ 
+  bag.donnees2=randomForest(y~.,data=X.app,mtry=p/2,importance=TRUE)
+  pred_bagging=predict(bag.donnees2,newdata=X.tst,type="response")
+  MSE[i] <- mean(X.tst$y == unlist(pred_bagging))
+} 
+mean(MSE)
+#0.5783119 sans normalisation 
+#0.5855407 avec normalisation 
+
+
+```
+
+On essayera de faire une PCA puis une FDA et d'appliquer les mêmes
+modèles pour voir si on obtient de meilleur prédictions.
+
+```{r}
+#PCA 
+
+MSE_qda <- rep(0,k)
+MSE_lda <- rep(0,k)
+MSE_BN <- rep(0,k)
+MSE_KNN <- rep(0,k)
+MSE <- rep(0,k)
+
+donnees2 <- donnees 
+library(class)
+for (i in 1:k){
+  
+  #traitement (normalisation ou ajout de log sur Y)
+  
+  #sans normalisation 
+  X.app <- data.frame(donnees2[fold !=i,])
+  X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  #sd_cols <- colSds(as.matrix(donnees2[fold !=i,-51]))
+  #mean_cols <-colMeans(donnees2[fold !=i,-51])
+  
+  #X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-51], 2, mean_cols, `-`))/sd_cols))
+  #X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-51], 2, mean_cols, `-`))/sd_cols))
+  
+  #X.app <- cbind(X.app, y = donnees2[fold !=i,51]) #ajout du Y qu'on avait enlevé
+  #X.tst <- cbind(X.tst, y = donnees2[fold ==i,51])
+  
+  #PCA 
+  pca<-princomp(X.app[,-51])
+  
+  
+  Z<- as.data.frame(pca$scores)
+  Z<- cbind(Z, y = donnees2[fold !=i,51]) #on prend que les 9 axes principaux pour ne pas overfit
+  
+  Z_tst<-as.data.frame(predict(object = pca, newdata = X.tst[,-51]))
+  Z_tst<- cbind(Z_tst, y = donnees2[fold ==i,51])
+  
+  #LM
+  modellm_PCA <- multinom(y ~ . ,data = Z , family = binomial)
+  pred_lm_PCA <- predict(modellm_PCA ,newdata = Z_tst)
+  MSE[i] <- mean(Z_tst$y == pred_lm_PCA)
+  
+  #QDA , LDA , BN
+  model_qda = qda(y~.,data=Z)
+  model_lda = lda(y~.,data=Z)
+  model_BN = naive_bayes(y~.,data=Z)
+  
+  pred_qda<-predict(model_qda,newdata=Z_tst)
+  pred_lda<-predict(model_lda,newdata=Z_tst)
+  pred_BN<-predict(model_BN,newdata=Z_tst)
+  
+  
+  MSE_qda[i] <- mean(Z_tst$y == pred_qda$class)
+  MSE_lda[i] <- mean(Z_tst$y == pred_lda$class)
+  MSE_BN[i] <- mean(Z_tst$y == pred_BN)
+  
+  
+  Ks <- 1:25
+  MSEs <- rep(0, length(Ks))
+  for (j in 1:length(Ks)){
+  
+    K <-Ks[j]
+    pred_knn <- class::knn(train = Z[,-51], test = Z_tst[,-51], cl = Z[,51], k = K)
+    MSE_knn_tmp <- mean(Z_tst$y == unlist(pred_knn))
+    MSEs[j] <- MSE_knn_tmp
+  }
+  MSE_KNN <- max(MSEs)
+  
+} 
+mean(MSE)
+mean(MSE_qda)
+mean(MSE_lda) 
+mean(MSE_BN)
+mean(MSE_KNN)
+
+#Sans normalisation 
+
+#LM 0.4206867 #QDA : 0.6582285 LDA : 0.5698352 BN : 0.5444923 KNN : 0.6904762
+
+#En prenant seulement les 9 axes principaux 
+#LM 0.5695152 #QDA : 0.469086 LDA : 0.4326734 BN : 0.44229 KNN : 0.6904762
+
+#avec normalisation 
+#LM 0.4043234 #QDA : 0.3769615 LDA : 0.4033655 BN : 0.3886244 KNN : 0.4285714
+```
+
+```{r}
+#FDA 
+
+MSE_qda <- rep(0,k)
+MSE_lda <- rep(0,k)
+MSE_BN <- rep(0,k)
+MSE_KNN <- rep(0,k)
+MSE <- rep(0,k)
+
+donnees2 <- donnees 
+library(class)
+for (i in 1:k){
+  
+  #traitement (normalisation ou ajout de log sur Y)
+  
+  #sans normalisation 
+  X.app <- data.frame(donnees2[fold !=i,])
+  X.tst <- data.frame(donnees2[fold ==i,])
+
+  
+  #avec normalisation
+  
+  #sd_cols <- colSds(as.matrix(donnees2[fold !=i,-51]))
+  #mean_cols <-colMeans(donnees2[fold !=i,-51])
+  
+  #X.app <- as.data.frame(t(t(sweep(donnees2[fold !=i,-51], 2, mean_cols, `-`))/sd_cols))
+  #X.tst <- as.data.frame(t(t(sweep(donnees2[fold ==i,-51], 2, mean_cols, `-`))/sd_cols))
+  
+  #X.app <- cbind(X.app, y = donnees2[fold !=i,51]) #ajout du Y qu'on avait enlevé
+  #X.tst <- cbind(X.tst, y = donnees2[fold ==i,51])
+  
+  #FDA
+  
+  lda.FDA<-lda(y~. ,data=X.app)
+  U<-lda.FDA$scaling
+  X1<-as.matrix(X.app[,-51])
+  Z<- data.frame(X1%*%U)
+  Z<- cbind(Z, y = donnees2[fold !=i,51]) #on prend que les 9 axes principaux pour ne pas overfit
+  
+  
+  X2<-as.matrix(X.tst[,-51])
+  Z_tst <- data.frame(X2%*%U)
+  Z_tst<- cbind(Z_tst, y = donnees2[fold ==i,51])
+  
+  #LM
+  modellm_FDA <- multinom(y ~ . ,data = Z , family = binomial)
+  pred_lm_FDA <- predict(modellm_FDA ,newdata = Z_tst)
+  MSE[i] <- mean(Z_tst$y == pred_lm_FDA)
+  
+  #QDA , LDA , BN
+  model_qda = qda(y~.,data=Z)
+  model_lda = lda(y~.,data=Z)
+  model_BN = naive_bayes(y~.,data=Z)
+  
+  pred_qda<-predict(model_qda,newdata=Z_tst)
+  pred_lda<-predict(model_lda,newdata=Z_tst)
+  pred_BN<-predict(model_BN,newdata=Z_tst)
+  
+  
+  MSE_qda[i] <- mean(Z_tst$y == pred_qda$class)
+  MSE_lda[i] <- mean(Z_tst$y == pred_lda$class)
+  MSE_BN[i] <- mean(Z_tst$y == pred_BN)
+  
+  Ks <- 1:25
+  MSEs <- rep(0, length(Ks))
+  for (j in 1:length(Ks)){
+  
+    K <-Ks[j]
+    pred_knn <- class::knn(train = Z[,-3], test = Z_tst[,-3], cl = Z[,3], k = K)
+    MSE_knn_tmp <- mean(Z_tst$y == unlist(pred_knn))
+    MSEs[j] <- MSE_knn_tmp
+  }
+  MSE_KNN <- max(MSEs)
+  
+} 
+mean(MSE)
+mean(MSE_qda)
+mean(MSE_lda) 
+mean(MSE_BN)
+mean(MSE_KNN)
+
+#Sans normalisation 
+
+#LM 0.5625539 #QDA : 0.5598086 LDA : 0.5698352 BN : 0.5675382 KNN : 0.6904762
+
+#avec normalisation 
+#LM 0.5625539 #QDA : 0.5598086 LDA : 0.5698352 BN : 0.5675382 KNN : 0.6904762
+
+
+```

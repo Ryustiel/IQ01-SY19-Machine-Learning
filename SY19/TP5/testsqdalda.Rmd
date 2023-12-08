@@ -1,0 +1,355 @@
+---
+---
+---
+
+## Libraries
+
+```{r}
+library(MASS)
+library(nnet)
+library(rpart)
+library(randomForest)
+library(naivebayes)
+library("rpart.plot")
+data = read.table("TP5_a23_clas_app.txt")
+```
+
+#### Visualisation des erreurs de prédiction
+
+-   Erreur de classification : hist x = 1, 2, 3 (bonnes classes) en fonction de couleurs (mauvaise classe trouvée)
+
+```{r}
+display_confusion = function(values){
+  # displays the confusion matrix in a way that is hopefully more visual
+  # values : 3x3 matrix of [actual values vs predict] counts
+  classes = c(
+  "1", "2(1)", "3(1)", "",
+  "1(2)", "2", "3(2)", "",
+  "1(3)", "2(3)", "3"
+  )
+  classes.values = c(values[1, 1:3], 0, values[2, 1:3], 0, values[3, 1:3])
+  classes.colors = c(
+    "red", "orange", "blue", "white"
+  )
+  barplot(classes.values, names.arg = classes, col = classes.colors)
+}
+
+values = c(
+    12, 2, 3, 0,
+    6, 20, 3, 0,
+    4, 2, 10
+  )
+
+# display_confusion(values)
+```
+
+#### Comprendre le Dataset
+
+#### Quick glance over the features et recherche de lignes incomplètes
+
+```{r}
+# summary(data)
+```
+
+```{r}
+boxplot(data, main = "General Feature Boxplot", ylab = "Values")
+boxplot(data[data$y==1,], main = "Y = 1 Feature Boxplot", ylab = "Values")
+boxplot(data[data$y==2,], main = "Y = 2 Feature Boxplot", ylab = "Values")
+boxplot(data[data$y==3,], main = "Y = 3 Feature Boxplot", ylab = "Values")
+
+# counting outliers
+outliers <- boxplot(data, plot = FALSE)$out
+```
+
+##### Affichage des de la distribution des points des données en fonction de Y
+
+```{r}
+for (i in 1:(length(data)-1)) {
+  plot(data[, i], col = data$y)
+}
+```
+
+Domaines des variables :
+
+-   Les variables X1 à X20 prennent des valeurs réelles strictement positives
+
+-   X21 à X45 sont réelles positives ou négatives
+
+-   Les variables X46 à X50 sont des entiers positifs
+
+Structure :
+
+-   Les valeurs semblent être issues d'une distribution normale
+
+-   Aucune variable n'a de donnée absente ou visiblement aberrante
+
+-   Les points de données vertes (classe) semblent être davantage dispersés
+
+-   Les points de données rouges (1ère classe) ont l'air d'être sous représentés
+
+#### Filtrage des données
+
+On pourrait :
+
+1.  Equilibrer les représentants des 3 classes dans les données d'entraînement pour réduire le biais sur la QDA
+
+2.  Retirer des points qui semblent avoir des valeurs extrêmes (3 fois l'écart type)
+
+3.  Faire attention à ne pas faire trop de Cherry Picking (pour seulement 500 points, en retirer extrêmement peu)
+
+REMARQUE : La véritable distribution des classes (en dehors de l'échantillon donné pour l'exercice) possède peut être la même distribution que celle de ces données, avec la classe 1 sous représentée en termes de proportion.
+
+Dans ce cas, diminuer la représentation des autres classes n'est peut être pas nécessaire et on préférerait de toutes façons que le modèle soit plus performant sur la distinction entre les classes 2 et 3
+
+Cette répartition est de toutes manières assumée par la méthode de sélection aléatoire des k-folds, qui conserve la distribution originale dans les données test.
+
+On pourrait aussi normaliser les données et espérer de meilleurs résultats de la part des techniques KNN notamment.
+
+```{r}
+# Pour accroître la représentativité de la variable y = 1
+# réduire les effectifs de y = 3 et y = 2
+# le faire dans la construction des folds
+
+# effectif de chaque classe
+counts = c(
+  length(data$y[data$y == 1]), 
+  length(data$y[data$y == 2]), 
+  length(data$y[data$y == 3])
+  )
+barplot(counts)
+text(x = barplot(counts, plot=FALSE), y = counts / 2, labels = counts, pos = 3)
+```
+
+On va essayer de normaliser les effectifs des classes 2 et 3 et observer l'impact que cela a sur les performances de différentes techniques
+
+```{r}
+indices = which(data$y == 2) # which lists the indices that match the test
+selected.2 = sample(indices, length(indices) / 2) # randomly selects half of class 2 points
+indices = which(data$y == 3)
+selected.3 = sample(indices, length(indices) / 2)
+
+# DISABLED : DO NOT EXTRACT ANYTHING FROM THE DATASET
+# data = data[-c(selected.2, selected.3),]
+
+
+# Displaying resulting counts
+counts = c(
+  length(data$y[data$y == 1]), 
+  length(data$y[data$y == 2]), 
+  length(data$y[data$y == 3])
+  )
+# barplot(counts)
+# text(x = barplot(counts, plot=FALSE), y = counts / 2, labels = counts, pos = 3)
+```
+
+#### Evaluation de plusieurs techniques
+
+On utilise les fonctions ci-dessous pour évaluer facilement différentes techniques et ne conserver que certaines informations clés.
+
+##### LDA
+
+La LDA et QDA s'appliquent naturellement à des problèmes de classification.
+
+```{r}
+lda_c = function(train, test) {
+  fit = lda(formula = y ~ ., data = train)
+  
+  yhat = predict(fit, newdata = test)$class
+  ytest = test$y
+  
+  confusion = table(ytest, yhat)
+  error = mean(yhat != ytest)
+  
+  return(list(error, confusion))
+}
+```
+
+##### QDA
+
+```{r}
+qda_c = function(train, test) {
+  fit = qda(formula = y ~ ., data = train)
+  
+  yhat = predict(fit, newdata = test)$class
+  ytest = test$y
+  
+  confusion = table(ytest, yhat)
+  error = mean(yhat != ytest)
+  
+  return(list(error, confusion))
+}
+```
+
+##### Multinomial Regression
+
+La régression logistique simple n'est pas accessible car 3 classes sont à distinguer, on utilise donc la régression multinomiale.
+
+```{r}
+multinom_c = function(train, test) {
+  fit = multinom(formula = y ~ ., data = train, family = binomial)
+
+  yhat = predict(fit, newdata = test)
+  ytest = test$y
+  
+  confusion = table(ytest, yhat)
+  error = mean(yhat != ytest)
+  
+  return(list(error, confusion))
+}
+```
+
+##### Tree Based
+
+```{r}
+tree_c = function(train, test) {
+  fit = rpart(y~., data = train, method = 'class')
+
+  yhat = predict(fit, newdata=test, type="class")
+  ytest = test$y
+  
+  confusion = table(ytest, yhat)
+  error = mean(yhat != ytest)
+  
+  return(list(error, confusion))
+}
+```
+
+##### Random Tree Forest
+
+```{r}
+random_forest_c = function(train, test) {
+  fit = randomForest(as.factor(y) ~ . , data = train, mtry = 3, importance = TRUE)
+  yhat = predict(fit, newdata = test, type = "response")
+  return(yhat)
+}
+```
+
+##### Naive Bayes
+
+```{r}
+nb_c = function(train, test) {
+  fit = naive_bayes(y~., data = train)
+  yhat = predict(fit, newdata = test)
+  return(yhat)
+}
+```
+
+##### KNN
+
+```{r}
+
+```
+
+#### Training et Evaluation par Folds
+
+On crée une division en 5 folds qui sera identique pour chaque modèle.
+
+```{r eval = FALSE}
+K = 5 # number of folds to be used
+n = dim(data)[1]
+folds = sample(K, n, replace = TRUE)
+```
+
+On crée aussi une liste qui contiendra les résultats de l'évaluation de chaque modèle, pour faciliter leur accès et raccourcir le code.
+
+```{r}
+techniques = list(multinom_c, qda_c, lda_c, tree_c, random_forest_c)
+technique_names = c("Log-Linear Multinomial model", "QDA", "LDA", "Tree", "Random Forest", "Naive Bayes", "KNN")
+```
+
+```{r eval = FALSE}
+N = length(techniques) # number of different Techniques to be tested
+
+# holds the results for each technique used
+errors = matrix(0, nrow = N, ncol = K) # each row represents the results by fold for a particular technique.
+confusion = array(0, c(N, 3, 3)) # same here, but confusion matrices will be the sum of each fold's individual confusion matrix
+```
+
+#### Entraînement et acquisition des résultats
+
+```{r eval = FALSE}
+for (i in 1:N) { # itere sur les techniques a tester
+  for (k in 1:K) {
+    # performs analysis using the folds
+    
+    mse = techniques[[i]](train = data[folds != k,], test = data[folds == k,])
+    # results : c(error_rate, confusion)
+    
+    errors[i, k] = mse
+  }
+}
+```
+
+### Plotting Errors
+
+```{r eval = FALSE}
+cat("MSE by Model using 5-Fold evaluation >>\n\n")
+for (i in 1:N) {
+  mse = round(mean(errors[i]), 2)
+  cat(technique_names[i], " : ", mse, "\n")
+}
+for (i in 1:N) {
+  confusion_matrix = matrix(confusion[[i]], nrow = 3, ncol = 3)
+  heatmap()
+}
+```
+
+### Plotting Heat Map
+
+```{r}
+library(igraph)
+plot(
+    graph_from_adjacency_matrix(t(confusion > 30), mode='directed'), 
+    main="Digraph: Real -> Mistaken Prediction")
+
+heatmap(confusion)
+```
+
+Les classes 1 et 3 sont très souvent confondues l'une avec l'autre
+
+C'est aussi le cas pour 2 et 3 dans une moindre mesure
+
+1 et 2 le sont très peu
+
+#### Multinomial Regression with selected features based on AIC
+
+```{r eval = FALSE}
+fit = multinom(formula = y ~ ., data = data, family = "binomial")
+# the AIC is defined for this linear model
+
+# AIC = stepAIC(fit, scope=y~.-y, direction="both")
+
+# formula = y ~ X4 + X6 + X13 + X24 + X27 + X29 + X30 + X32 + X33 + X46 + X47 + X48 + X49 + X50
+AICselected = c("X4", "X6", "X13", "X24", "X27", "X29", "X30", "X32", "X33", "X46", "X47", "X48", "X49", "X50", "y")
+
+AICdata = data[,AICselected]
+```
+
+Lancer ces techniques avec sélection de variable
+
+### Checking Y class partition accross the folds
+
+In order to make sure class 1 is not underrepresented. The class may be skipped by the model while underrepresented, which may explain some of the errors seen in class 1 vs class 3.
+
+```{r}
+errors # error rate for each fold (fold i at ith position in the vector)
+```
+
+```{r}
+for (i in 1:K) {
+  fdata = data[folds == i,]
+  proportions = c(
+    mean(fdata$y == 1), # proportion of class 1
+    mean(fdata$y == 2), # ... of class 2
+    mean(fdata$y == 3)
+    )
+  
+  a = 
+  
+  print(paste("class number", i))
+  print(paste("error rate", round(errors[i], 2)))
+  print(round(proportions, 2))
+  print("---------")
+}
+
+```
